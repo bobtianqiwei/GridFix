@@ -39,50 +39,72 @@ python compare_layout.py --design samples/design.png --impl samples/page.png --o
 ### Advanced Usage with Custom Parameters
 ```bash
 python compare_layout.py \
-  --design samples/design.png \
-  --impl samples/page.png \
+  --samples samples \
   --out artifacts \
   --width 1920 \
   --align_tol 12 \
   --ratio_tol 0.15 \
-  --min_box 20
+  --min_box 20 \
+  --overlay 1 \
+  --save_crops 1 \
+  --topk 5 \
+  --use_ssim_focus 0
 ```
 
 ## Output Files
 
-### 1. `artifacts/issues.json`
-JSON file containing detected issues grouped by priority:
+### 1. `artifacts/pair_X/issues.json`
+JSON file containing detected issues with enhanced metadata:
 
 ```json
 [
   {
+    "id": "1",
     "priority": "P0",
     "type": "overlap", 
     "bbox": [x, y, width, height],
-    "hint": "Text and image overlap, suggest increasing container min-height or gap"
-  },
-  {
-    "priority": "P1",
-    "type": "misalign",
-    "bbox": [x, y, width, height], 
-    "hint": "Left edge not aligned, suggest aligning to main grid (tolerance 8px)"
+    "section": "header",
+    "score": 0.85,
+    "hint": "Text element at (x,y) overlaps with element at (other_x,other_y), suggest using grid/flex/gap/min-height/wrap instead of z-index",
+    "overlap_ratio": 0.85,
+    "iou": 0.75
   }
 ]
 ```
 
-### 2. `artifacts/suggestion_prompt.txt`
-English prompt for frontend AI with prioritized suggestions:
+### 2. `artifacts/pair_X/issues.csv`
+CSV report with tabular format for easy analysis.
+
+### 3. `artifacts/pair_X/overlay.png`
+Visual overlay showing detected issues with color-coded bounding boxes:
+- **Red (P0)**: Critical overlap issues
+- **Orange (P1)**: Important alignment/spacing issues  
+- **Blue (P2)**: Minor proportion issues
+
+### 4. `artifacts/pair_X/crops/`
+Directory containing cropped images of each detected issue for detailed inspection.
+
+### 5. `artifacts/pair_X/suggestion_prompt.txt`
+English prompt for frontend AI with Top-K limiting and section-based organization:
 
 ```
 【Objective】Focus on readability and human-like layout rather than pixel-perfect accuracy.
 
-【P0 Critical Issues】
-• Text and image overlap, suggest increasing container min-height or gap
-Recommended actions: Avoid z-index overlays, use grid/flex/gap/min-height/wrapping instead
+【P1 Important Issues - Alignment & Spacing】
 
-【P1 Important Issues】  
-• Left edge not aligned, suggest aligning to main grid (tolerance 8px)
+HEADER section:
+  Spacing issues (5):
+    • Element at (x,y) has inconsistent spacing, suggest using unified 8px or 16px spacing system
+    • ... and 3 more spacing issues
+
 Recommended actions: Align to unified left/right edges, standardize card/button styles (border-radius, padding), unify heading hierarchy
+
+【Issue Summary】
+• P0 (Critical): 0 overlap issues
+• P1 (Important): 17 alignment/spacing issues
+• P2 (Minor): 0 aspect ratio issues
+• Total: 17 issues to address
+• Showing top 5 issues per section
 
 【Acceptance Criteria】
 • No overlapping elements
@@ -100,36 +122,60 @@ Recommended actions: Align to unified left/right edges, standardize card/button 
 | `--align_tol` | 8 | Alignment tolerance in pixels |
 | `--ratio_tol` | 0.1 | Ratio tolerance (10%) |
 | `--min_box` | 16 | Minimum box size to consider |
+| `--thin_px` | 4 | Minimum side length for thin elements |
+| `--min_area` | 1500 | Minimum area for elements |
+| `--overlay` | 1 | Generate overlay visualization (0/1) |
+| `--save_crops` | 1 | Save issue crops (0/1) |
+| `--crop_size` | 160 | Crop size for issue visualization |
+| `--topk` | 5 | Top-K issues to show per section |
+| `--use_ssim_focus` | 0 | Use SSIM hotspots for scoring (0/1) |
 
 ## Detection Rules
 
 ### P0 (Critical) - Overlaps
-- IoU > 0.2 between any two boxes
-- IoU > 0.1 if text is involved (requires pytesseract)
-- Suggests using grid/flex/gap instead of z-index
+- **Enhanced overlap detection**: Only reports overlaps that affect readability
+- **Text-involved overlaps**: Overlap ratio > 30% when text is involved
+- **Large element overlaps**: Overlap ratio > 50% for large elements (area > 3000px²)
+- **Robust filtering**: Uses quantized coordinates and NMS to reduce false positives
+- **Suggests**: grid/flex/gap/min-height/wrap instead of z-index
 
 ### P1 (Important) - Alignment & Spacing  
-- Left/center/right edges not aligned within tolerance
-- Inconsistent spacing between adjacent elements (>40% variance)
-- Suggests unified grid system and consistent spacing
+- **Adaptive row tolerance**: Based on median box height (6-20px range)
+- **Content edge estimation**: Automatically detects main content boundaries
+- **Class-aware grouping**: Separates text, media, and icon elements
+- **IQR-based spacing**: Uses interquartile range for robust variance detection
+- **Suggests**: Unified grid system and consistent spacing
 
 ### P2 (Minor) - Proportions
-- Aspect ratio deviation >10% from group mean
-- Only applies to larger elements (area > 1000px²)
-- Suggests unified aspect ratios with object-fit
+- **Media-only analysis**: Only applies to media elements (area ≥ 4000px², ratio 0.5-2.0)
+- **Group-based comparison**: Compares within same element class
+- **Deviation threshold**: >10% from group mean aspect ratio
+- **Suggests**: Unified aspect ratios with object-fit: cover
+
+### Enhanced Features
+- **Box preprocessing**: Quantization, deduplication, NMS, filtering
+- **Element classification**: text, media, icon, other
+- **Section identification**: header, main_content_top, main_content_bottom, footer
+- **SSIM hotspots**: Optional structural similarity analysis for focus scoring
 
 ## Sample Files
 
-Place your images in the `samples/` directory:
-- `samples/design.png` - Design mockup
-- `samples/page.png` - Implementation screenshot
+Place your image pairs in the `samples/` directory:
+- `samples/1_design.png` + `samples/1_page.png` - First pair
+- `samples/2_design.png` + `samples/2_page.png` - Second pair
+- `samples/N_design.png` + `samples/N_page.png` - Nth pair
+
+The script will automatically detect and process all pairs.
 
 ## Notes
 
 - **OCR Dependency**: If pytesseract is not installed, text detection is skipped but the script continues to work
 - **Image Formats**: Supports common formats (PNG, JPG, etc.)
 - **Performance**: Processing time depends on image size and complexity
-- **Accuracy**: This is a minimal MVP - results may need manual review for complex layouts
+- **Accuracy**: Enhanced with robust preprocessing to reduce false positives
+- **Visualization**: Generates overlay images and issue crops for better analysis
+- **Batch Processing**: Automatically processes multiple image pairs
+- **Top-K Limiting**: Configurable limit on number of issues shown per section
 
 ## Troubleshooting
 
